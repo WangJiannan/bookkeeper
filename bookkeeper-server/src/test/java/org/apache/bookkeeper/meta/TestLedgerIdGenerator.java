@@ -94,6 +94,7 @@ public class TestLedgerIdGenerator extends TestCase {
     public static Collection<Object[]> configs() {
         return Arrays.asList(new Object[][] {
             { ZkLedgerIdGenerator.class },
+            { ZkBatchLedgerIdGenerator.class },
         });
     }
 
