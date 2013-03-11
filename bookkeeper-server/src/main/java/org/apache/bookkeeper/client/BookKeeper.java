@@ -31,6 +31,7 @@ import org.apache.bookkeeper.client.AsyncCallback.DeleteCallback;
 import org.apache.bookkeeper.client.AsyncCallback.OpenCallback;
 import org.apache.bookkeeper.client.BKException.Code;
 import org.apache.bookkeeper.conf.ClientConfiguration;
+import org.apache.bookkeeper.meta.LedgerIdGenerator;
 import org.apache.bookkeeper.meta.LedgerManager;
 import org.apache.bookkeeper.meta.LedgerManagerFactory;
 import org.apache.bookkeeper.proto.BookieClient;
@@ -82,6 +83,7 @@ public class BookKeeper {
     // Ledger manager responsible for how to store ledger meta data
     final LedgerManagerFactory ledgerManagerFactory;
     final LedgerManager ledgerManager;
+    final LedgerIdGenerator ledgerIdGenerator;
 
     final ClientConfiguration conf;
 
@@ -137,6 +139,7 @@ public class BookKeeper {
 
         ledgerManagerFactory = LedgerManagerFactory.newLedgerManagerFactory(conf, zk);
         ledgerManager = ledgerManagerFactory.newLedgerManager();
+        ledgerIdGenerator = LedgerManagerFactory.newLedgerIdGenerator(conf, zk);
 
         ownChannelFactory = true;
         ownZKHandle = true;
@@ -201,10 +204,15 @@ public class BookKeeper {
 
         ledgerManagerFactory = LedgerManagerFactory.newLedgerManagerFactory(conf, zk);
         ledgerManager = ledgerManagerFactory.newLedgerManager();
+        ledgerIdGenerator = LedgerManagerFactory.newLedgerIdGenerator(conf, zk);
     }
 
     LedgerManager getLedgerManager() {
         return ledgerManager;
+    }
+
+    LedgerIdGenerator getLedgerIdGenerator() {
+        return ledgerIdGenerator;
     }
 
     /**

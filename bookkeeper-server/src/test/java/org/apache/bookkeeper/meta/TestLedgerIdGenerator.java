@@ -1,0 +1,171 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.bookkeeper.meta;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import junit.framework.TestCase;
+
+import org.apache.bookkeeper.conf.AbstractConfiguration;
+import org.apache.bookkeeper.conf.ServerConfiguration;
+import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.GenericCallback;
+import org.apache.bookkeeper.test.ZooKeeperUtil;
+import org.apache.commons.configuration.ConfigurationException;
+import org.apache.zookeeper.ZooKeeper;
+import org.apache.zookeeper.KeeperException.Code;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@RunWith(Parameterized.class)
+public class TestLedgerIdGenerator extends TestCase {
+    private static final Logger LOG = LoggerFactory.getLogger(TestLedgerIdGenerator.class);
+
+    final Class<? extends LedgerIdGenerator> generatorCls;
+    AbstractConfiguration conf = new ServerConfiguration() {
+        @Override
+        public Class<? extends LedgerIdGenerator> getLedgerIdGeneratorClass() throws ConfigurationException {
+            return generatorCls;
+        }
+    };
+
+    ZooKeeperUtil zkutil;
+    ZooKeeper zk;
+
+    LedgerIdGenerator ledgerIdGenerator;
+
+    public TestLedgerIdGenerator(Class<? extends LedgerIdGenerator> generatorCls) {
+        this.generatorCls = generatorCls;
+    }
+
+    @Override
+    @Before
+    public void setUp() throws Exception {
+        LOG.info("Setting up test");
+        super.setUp();
+
+        zkutil = new ZooKeeperUtil();
+        zkutil.startServer();
+        zk = zkutil.getZooKeeperClient();
+
+        ledgerIdGenerator = LedgerManagerFactory.newLedgerIdGenerator(conf, zk);
+        LOG.info("LedgerIdGenerator: {}", ledgerIdGenerator.getClass().getName());
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        LOG.info("Tearing down test");
+        zk.close();
+        zkutil.killServer();
+
+        super.tearDown();
+    }
+
+    @Parameters
+    public static Collection<Object[]> configs() {
+        return Arrays.asList(new Object[][] {
+            { ZkLedgerIdGenerator.class },
+        });
+    }
+
+    @Test(timeout=60000)
+    public void testGenerateLedgerId() throws Exception {
+        // Create *nThread* threads to generate ledger id within *time* ms.
+        // And then check there is no identical ledger id.
+        final int nThread = 4;
+        final long time = 500;
+
+        final AtomicInteger counter = new AtomicInteger(0);
+        final AtomicInteger errCount = new AtomicInteger(0);
+        final ConcurrentLinkedQueue<Long> ledgerIds = new ConcurrentLinkedQueue<Long>();
+        final GenericCallback<Long> cb = new GenericCallback<Long>() {
+            @Override
+            public void operationComplete(int rc, Long result) {
+                if (Code.OK.intValue() == rc) {
+                    ledgerIds.add(result);
+                } else {
+                    errCount.incrementAndGet();
+                }
+                int left = counter.decrementAndGet();
+                if (left == 0) {
+                    synchronized (counter) {
+                        counter.notify();
+                    }
+                }
+            }
+        };
+
+        final AtomicBoolean stop = new AtomicBoolean(false);
+        final CountDownLatch countDownLatch = new CountDownLatch(nThread);
+        long start = System.currentTimeMillis();
+
+        Thread[] threads = new Thread[nThread];
+        for (int i = 0; i < nThread; i++) {
+            threads[i] = new Thread() {
+                @Override
+                public void run() {
+                    while (!stop.get()) {
+                        counter.incrementAndGet();
+                        ledgerIdGenerator.generateLedgerId(cb);
+                    }
+                    countDownLatch.countDown();
+                }
+            };
+            threads[i].start();
+        }
+
+        LOG.info("All threads start to generate ledger id.");
+        Thread.sleep(time);
+        stop.set(true);
+        assertTrue("Wait ledger id generation threads to stop timeout : ",
+                countDownLatch.await(5, TimeUnit.SECONDS));
+        LOG.info("All ledger id generation threads stop, wait all ledger id generation callback.");
+        synchronized (counter) {
+            while (counter.get() > 0) {
+                // wait all ledger id generator callback
+                counter.wait();
+            }
+        }
+        LOG.info("Number of generated ledger id: {}, time used: {}", ledgerIds.size(),
+                System.currentTimeMillis() - start);
+        assertEquals("Error occur during ledger id generation : ", 0, errCount.get());
+
+        Set<Long> ledgers = new HashSet<Long>();
+        while (!ledgerIds.isEmpty()) {
+            Long ledger = ledgerIds.poll();
+            assertNotNull("Generated ledger id is null : ", ledger);
+            assertFalse("Ledger id [" + ledger + "] conflict : ", ledgers.contains(ledger));
+            ledgers.add(ledger);
+        }
+    }
+
+}

@@ -226,6 +226,30 @@ public abstract class LedgerManagerFactory {
     }
 
     /**
+     * Creates the ledger id generator, which is used for global unique ledger id
+     * generation.
+     *
+     * @return Ledger ID generator
+     * @see LedgerIdGenerator
+     */
+    public static LedgerIdGenerator newLedgerIdGenerator(final AbstractConfiguration conf, final ZooKeeper zk)
+            throws IOException {
+        Class<? extends LedgerIdGenerator> generatorClass = null;
+        try {
+            generatorClass = conf.getLedgerIdGeneratorClass();
+        } catch (ConfigurationException e) {
+            throw new IOException("Failed to get ledger id generator class from configuration : ", e);
+        }
+        if (generatorClass == null) {
+            generatorClass = ZkLedgerIdGenerator.class;
+        }
+
+        // instantiate a ledger id generator
+        LedgerIdGenerator generator = ReflectionUtils.newInstance(generatorClass);
+        return generator.initialize(conf, zk);
+    }
+
+    /**
      * Format the ledger metadata for LedgerManager
      * 
      * @param conf

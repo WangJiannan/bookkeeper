@@ -37,12 +37,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.zookeeper.AsyncCallback;
+import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.AsyncCallback.DataCallback;
+import org.apache.zookeeper.AsyncCallback.StringCallback;
 import org.apache.zookeeper.AsyncCallback.VoidCallback;
 import org.apache.zookeeper.AsyncCallback.StatCallback;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.ZooKeeper;
+import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.data.Stat;
 
 /**
@@ -55,6 +58,7 @@ abstract class AbstractZkLedgerManager implements LedgerManager {
     protected final AbstractConfiguration conf;
     protected final ZooKeeper zk;
     protected final String ledgerRootPath;
+    protected final String IDGEN_ZNODE;
 
     /**
      * ZooKeeper-based Ledger Manager Constructor
@@ -68,6 +72,8 @@ abstract class AbstractZkLedgerManager implements LedgerManager {
         this.conf = conf;
         this.zk = zk;
         this.ledgerRootPath = conf.getZkLedgersRootPath();
+        String ledgerIdGenPath = conf.getZkLedgerIdGenPath();
+        this.IDGEN_ZNODE = ledgerIdGenPath.substring(ledgerIdGenPath.lastIndexOf('/') + 1);
     }
 
     /**
@@ -88,6 +94,31 @@ abstract class AbstractZkLedgerManager implements LedgerManager {
      * @throws IOException when the ledger path is invalid
      */
     protected abstract long getLedgerId(String ledgerPath) throws IOException;
+
+    @Override
+    public void createLedgerMetadata(final long ledgerId, final LedgerMetadata metadata,
+            final GenericCallback<Void> ledgerCb) {
+        String ledgerPath = getLedgerPath(ledgerId);
+        StringCallback scb = new StringCallback() {
+            @Override
+            public void processResult(int rc, String path, Object ctx, String name) {
+                if (rc == KeeperException.Code.OK.intValue()) {
+                    // update version
+                    metadata.setVersion(new ZkVersion(0));
+                    ledgerCb.operationComplete(BKException.Code.OK, null);
+                } else if (rc == KeeperException.Code.NODEEXISTS.intValue()) {
+                    LOG.warn("Failed to create ledger {} which is existed, will get new ledger id and retry.", ledgerId);
+                    ledgerCb.operationComplete(BKException.Code.LedgerExistException, null);
+                } else {
+                    LOG.error("Could not create node for ledger",
+                            KeeperException.create(KeeperException.Code.get(rc), path));
+                    ledgerCb.operationComplete(BKException.Code.ZKException, null);
+                }
+            }
+        };
+        ZkUtils.createFullPathOptimistic(zk, ledgerPath, metadata.serialize(), Ids.OPEN_ACL_UNSAFE,
+                CreateMode.PERSISTENT, scb, null);
+    }
 
     /**
      * Removes ledger metadata from ZooKeeper if version matches.
@@ -261,7 +292,8 @@ abstract class AbstractZkLedgerManager implements LedgerManager {
                 || BookKeeperConstants.COOKIE_NODE.equals(znode)
                 || BookKeeperConstants.LAYOUT_ZNODE.equals(znode)
                 || BookKeeperConstants.INSTANCEID.equals(znode)
-                || BookKeeperConstants.UNDER_REPLICATION_NODE.equals(znode)) {
+                || BookKeeperConstants.UNDER_REPLICATION_NODE.equals(znode)
+                || this.IDGEN_ZNODE.equals(znode)) {
             return true;
         }
         return false;

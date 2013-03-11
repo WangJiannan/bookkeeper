@@ -81,8 +81,7 @@ class HierarchicalLedgerManagerFactory extends LedgerManagerFactory {
         String ledgersRootPath = conf.getZkLedgersRootPath();
         List<String> children = zk.getChildren(ledgersRootPath, false);
         for (String child : children) {
-            if (!HierarchicalLedgerManager.IDGEN_ZNODE.equals(child)
-                    && ledgerManager.isSpecialZnode(child)) {
+            if (ledgerManager.isSpecialZnode(child)) {
                 continue;
             }
             ZKUtil.deleteRecursive(zk, ledgersRootPath + "/" + child);
@@ -90,4 +89,5 @@ class HierarchicalLedgerManagerFactory extends LedgerManagerFactory {
         // Delete and recreate the LAYOUT information.
         super.format(conf, zk);
     }
+
 }

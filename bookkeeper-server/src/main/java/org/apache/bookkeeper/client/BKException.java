@@ -117,6 +117,7 @@ public abstract class BKException extends Exception {
         int ProtocolVersionException = -16;
         int MetadataVersionException = -17;
         int MetaStoreException = -18;
+        int LedgerExistException = -19;
 
         int IllegalOpException = -100;
         int LedgerFencedException = -101;
@@ -157,6 +158,8 @@ public abstract class BKException extends Exception {
             return "Error while using ZooKeeper";
         case Code.MetaStoreException:
             return "Error while using MetaStore";
+        case Code.LedgerExistException:
+            return "Ledger existed";
         case Code.LedgerRecoveryException:
             return "Error while recovering ledger";
         case Code.LedgerClosedException:
@@ -273,6 +276,12 @@ public abstract class BKException extends Exception {
     public static class MetaStoreException extends BKException {
         public MetaStoreException() {
             super(Code.MetaStoreException);
+        }
+    }
+
+    public static class LedgerExistException extends BKException {
+        public LedgerExistException() {
+            super(Code.LedgerExistException);
         }
     }
 

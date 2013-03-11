@@ -25,6 +25,7 @@ import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.commons.configuration.SystemConfiguration;
 
+import org.apache.bookkeeper.meta.LedgerIdGenerator;
 import org.apache.bookkeeper.meta.LedgerManagerFactory;
 import org.apache.bookkeeper.util.ReflectionUtils;
 
@@ -51,6 +52,9 @@ public abstract class AbstractConfiguration extends CompositeConfiguration {
     protected final static String LEDGER_MANAGER_FACTORY_CLASS = "ledgerManagerFactoryClass";
     protected final static String ZK_LEDGERS_ROOT_PATH = "zkLedgersRootPath";
     protected final static String AVAILABLE_NODE = "available";
+    protected final static String LEDGER_ID_GENERATOR_CLASS = "ledgerIdGeneratorClass";
+    protected final static String ZK_LEDGER_ID_GEN_PATH = "zkLedgerIdGenPath";
+
     protected final static String REREPLICATION_ENTRY_BATCH_SIZE = "rereplicationEntryBatchSize";
 
     // Metastore settings, only being used when LEDGER_MANAGER_FACTORY_CLASS is MSLedgerManagerFactory
@@ -152,6 +156,14 @@ public abstract class AbstractConfiguration extends CompositeConfiguration {
     }
 
     /**
+     * Get Ledger ID Generator Class.
+     */
+    public Class<? extends LedgerIdGenerator> getLedgerIdGeneratorClass() throws ConfigurationException {
+        return ReflectionUtils.getClass(this, LEDGER_ID_GENERATOR_CLASS, null, LedgerIdGenerator.class,
+                defaultLoader);
+    }
+
+    /**
      * Set Zk Ledgers Root Path.
      *
      * @param zkLedgersPath zk ledgers root path
@@ -177,7 +189,16 @@ public abstract class AbstractConfiguration extends CompositeConfiguration {
     public String getZkAvailableBookiesPath() {
         return getZkLedgersRootPath() + "/" + AVAILABLE_NODE;
     }
-    
+
+    /**
+     * Get Zk Ledger ID Generation Path.
+     *
+     * @return Zk Ledger ID Generation Path
+     */
+    public String getZkLedgerIdGenPath() {
+        return getString(ZK_LEDGER_ID_GEN_PATH, getZkLedgersRootPath() + "/idgen");
+    }
+
     /**
      * Set the max entries to keep in fragment for re-replication. If fragment
      * has more entries than this count, then the original fragment will be
