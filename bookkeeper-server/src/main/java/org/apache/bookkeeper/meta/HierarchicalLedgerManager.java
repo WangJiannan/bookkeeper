@@ -53,6 +53,8 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
     // we use this to prevent long stack chains from building up in callbacks
     ScheduledExecutorService scheduler;
 
+    String ledgerPathPrefix;
+
     /**
      * Constructor
      *
@@ -65,6 +67,7 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
         super(conf, zk);
 
         this.scheduler = Executors.newSingleThreadScheduledExecutor();
+        this.ledgerPathPrefix = ledgerRootPath + "/";
         LOG.debug("Using HierarchicalLedgerManager with root path : {}", ledgerRootPath);
     }
 
@@ -85,10 +88,10 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
 
     @Override
     public long getLedgerId(String pathName) throws IOException {
-        if (!pathName.startsWith(ledgerRootPath)) {
+        if (!pathName.startsWith(ledgerPathPrefix)) {
             throw new IOException("it is not a valid hashed path name : " + pathName);
         }
-        String hierarchicalPath = pathName.substring(ledgerRootPath.length() + 1);
+        String hierarchicalPath = pathName.substring(ledgerPathPrefix.length());
         return StringUtils.stringToHierarchicalLedgerId(hierarchicalPath);
     }
 
@@ -104,14 +107,14 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
                     cb1.processResult(successRc, null, context);
                     return;
                 }
-                final String l1NodePath = ledgerRootPath + "/" + l1Node;
+                final String l1NodePath = ledgerPathPrefix + l1Node;
                 // process level1 path, after all children of level1 process
                 // it callback to continue processing next level1 node
                 asyncProcessLevelNodes(l1NodePath, new Processor<String>() {
                     @Override
                     public void process(String l2Node, AsyncCallback.VoidCallback cb2) {
                         // process level1/level2 path
-                        String l2NodePath = ledgerRootPath + "/" + l1Node + "/" + l2Node;
+                        String l2NodePath = ledgerPathPrefix + l1Node + "/" + l2Node;
                         // process each ledger
                         // after all ledger are processed, cb2 will be call to continue processing next level2 node
                         asyncProcessLedgersInSingleNode(l2NodePath, processor, cb2,

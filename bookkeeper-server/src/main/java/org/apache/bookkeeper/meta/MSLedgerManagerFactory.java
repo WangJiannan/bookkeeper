@@ -106,7 +106,10 @@ public class MSLedgerManagerFactory extends LedgerManagerFactory {
     }
 
     static Long key2LedgerId(String key) {
-        return null == key ? null : Long.parseLong(key, 10);
+        if (null == key || key.isEmpty()) {
+            return null;
+        }
+        return Long.parseLong(key, 10);
     }
 
     static String ledgerId2Key(Long lid) {

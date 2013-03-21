@@ -72,7 +72,8 @@ public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
         return Arrays.asList(new Object[][] {
             { FlatLedgerManagerFactory.class },
             { HierarchicalLedgerManagerFactory.class },
-            { MSLedgerManagerFactory.class }
+            { MSLedgerManagerFactory.class },
+            { ZkRadixTreeLedgerManagerFactory.class },
         });
     }
 
@@ -81,6 +82,8 @@ public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
     public void setUp() throws Exception {
         super.setUp();
         ledgerManagerFactory = LedgerManagerFactory.newLedgerManagerFactory(baseConf, zkc);
+        ledgerManager = null;
+        ledgerIdGenerator = null;
     }
 
     @After

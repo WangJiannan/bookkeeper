@@ -55,6 +55,7 @@ public abstract class AbstractConfiguration extends CompositeConfiguration {
     protected final static String LEDGER_ID_GENERATOR_CLASS = "ledgerIdGeneratorClass";
     protected final static String ZK_LEDGER_ID_GEN_PATH = "zkLedgerIdGenPath";
     protected final static String LEDGER_ID_BATCH_SIZE = "ledgerIdBatchSize";
+    protected final static String ZK_LEDGER_METADATA_PATH = "zkLedgerMetadataPath";
 
     protected final static String REREPLICATION_ENTRY_BATCH_SIZE = "rereplicationEntryBatchSize";
 
@@ -198,6 +199,15 @@ public abstract class AbstractConfiguration extends CompositeConfiguration {
      */
     public String getZkLedgerIdGenPath() {
         return getString(ZK_LEDGER_ID_GEN_PATH, getZkLedgersRootPath() + "/idgen");
+    }
+
+    /**
+     * Get Zk Ledger Metadata Management Path
+     *
+     * @return Zk Ledger Metadata Management Path
+     */
+    public String getZkLedgerMetadataPath() {
+        return getString(ZK_LEDGER_METADATA_PATH, getZkLedgersRootPath() + "/metadata");
     }
 
     /**
