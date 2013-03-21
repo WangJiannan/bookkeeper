@@ -19,8 +19,6 @@ package org.apache.bookkeeper.meta;
  */
 
 import java.io.IOException;
-import java.util.NoSuchElementException;
-import java.util.Set;
 
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.LedgerMetadata;
@@ -124,43 +122,4 @@ class FlatLedgerManager extends AbstractZkLedgerManager {
         asyncProcessLedgersInSingleNode(ledgerRootPath, processor, finalCb, ctx, successRc, failureRc);
     }
 
-    @Override
-    public LedgerRangeIterator getLedgerRanges() {
-        return new LedgerRangeIterator() {
-            // single iterator, can visit only one time
-            boolean nextCalled = false;
-            LedgerRange nextRange = null;
-
-            synchronized private void preload() throws IOException {
-                if (nextRange != null) {
-                    return;
-                }
-                Set<Long> zkActiveLedgers = null;
-
-                try {
-                    zkActiveLedgers = ledgerListToSet(
-                            ZkUtils.getChildrenInSingleNode(zk, ledgerRootPath), ledgerRootPath);
-                    nextRange = new LedgerRange(zkActiveLedgers);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Error when get child nodes from zk", ie);
-                }
-            }
-
-            @Override
-            synchronized public boolean hasNext() throws IOException {
-                preload();
-                return nextRange != null && nextRange.size() > 0 && !nextCalled;
-            }
-
-            @Override
-            synchronized public LedgerRange next() throws IOException {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
-                }
-                nextCalled = true;
-                return nextRange;
-            }
-        };
-    }
 }

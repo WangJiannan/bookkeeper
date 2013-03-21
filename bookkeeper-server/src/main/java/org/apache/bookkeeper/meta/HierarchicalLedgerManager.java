@@ -19,13 +19,10 @@ package org.apache.bookkeeper.meta;
  */
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.SortedSet;
 
 import org.apache.bookkeeper.client.LedgerMetadata;
 import org.apache.bookkeeper.conf.AbstractConfiguration;
@@ -40,7 +37,6 @@ import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,8 +61,6 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
 
     static final String IDGEN_ZNODE = "idgen";
     static final String IDGENERATION_PREFIX = "/" + IDGEN_ZNODE + "/ID-";
-    private static final String MAX_ID_SUFFIX = "9999";
-    private static final String MIN_ID_SUFFIX = "0000";
 
     // Path to generate global id
     private final String idGenPath;
@@ -187,41 +181,6 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
         }
         String hierarchicalPath = pathName.substring(ledgerRootPath.length() + 1);
         return StringUtils.stringToHierarchicalLedgerId(hierarchicalPath);
-    }
-
-    // get ledger from all level nodes
-    private long getLedgerId(String...levelNodes) throws IOException {
-        return StringUtils.stringToHierarchicalLedgerId(levelNodes);
-    }
-
-    //
-    // Active Ledger Manager
-    //
-
-    /**
-     * Get the smallest cache id in a specified node /level1/level2
-     *
-     * @param level1
-     *          1st level node name
-     * @param level2
-     *          2nd level node name
-     * @return the smallest ledger id
-     */
-    private long getStartLedgerIdByLevel(String level1, String level2) throws IOException {
-        return getLedgerId(level1, level2, MIN_ID_SUFFIX);
-    }
-
-    /**
-     * Get the largest cache id in a specified node /level1/level2
-     *
-     * @param level1
-     *          1st level node name
-     * @param level2
-     *          2nd level node name
-     * @return the largest ledger id
-     */
-    private long getEndLedgerIdByLevel(String level1, String level2) throws IOException {
-        return getLedgerId(level1, level2, MAX_ID_SUFFIX);
     }
 
     @Override
@@ -369,119 +328,4 @@ class HierarchicalLedgerManager extends AbstractZkLedgerManager {
         return IDGEN_ZNODE.equals(znode) || super.isSpecialZnode(znode);
     }
 
-    @Override
-    public LedgerRangeIterator getLedgerRanges() {
-        return new HierarchicalLedgerRangeIterator();
-    }
-
-    /**
-     * Iterator through each metadata bucket with hierarchical mode
-     */
-    private class HierarchicalLedgerRangeIterator implements LedgerRangeIterator {
-        private Iterator<String> l1NodesIter = null;
-        private Iterator<String> l2NodesIter = null;
-        private String curL1Nodes = "";
-        private boolean iteratorDone = false;
-        private LedgerRange nextRange = null;
-
-        /**
-         * iterate next level1 znode
-         *
-         * @return false if have visited all level1 nodes
-         * @throws InterruptedException/KeeperException if error occurs reading zookeeper children
-         */
-        private boolean nextL1Node() throws KeeperException, InterruptedException {
-            l2NodesIter = null;
-            while (l2NodesIter == null) {
-                if (l1NodesIter.hasNext()) {
-                    curL1Nodes = l1NodesIter.next();
-                } else {
-                    return false;
-                }
-                if (isSpecialZnode(curL1Nodes)) {
-                    continue;
-                }
-                List<String> l2Nodes = zk.getChildren(ledgerRootPath + "/" + curL1Nodes, null);
-                l2NodesIter = l2Nodes.iterator();
-                if (!l2NodesIter.hasNext()) {
-                    l2NodesIter = null;
-                    continue;
-                }
-            }
-            return true;
-        }
-
-        synchronized private void preload() throws IOException {
-            while (nextRange == null && !iteratorDone) {
-                boolean hasMoreElements = false;
-                try {
-                    if (l1NodesIter == null) {
-                        l1NodesIter = zk.getChildren(ledgerRootPath, null).iterator();
-                        hasMoreElements = nextL1Node();
-                    } else if (l2NodesIter == null || !l2NodesIter.hasNext()) {
-                        hasMoreElements = nextL1Node();
-                    }
-                } catch (KeeperException ke) {
-                    throw new IOException("Error preloading next range", ke);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while preloading", ie);
-                }
-                if (hasMoreElements) {
-                    nextRange = getLedgerRangeByLevel(curL1Nodes, l2NodesIter.next());
-                    if (nextRange.size() == 0) {
-                        nextRange = null;
-                    }
-                } else {
-                    iteratorDone = true;
-                }
-            }
-        }
-
-        @Override
-        synchronized public boolean hasNext() throws IOException {
-            preload();
-            return nextRange != null && !iteratorDone;
-        }
-
-        @Override
-        synchronized public LedgerRange next() throws IOException {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
-            }
-            LedgerRange r = nextRange;
-            nextRange = null;
-            return r;
-        }
-
-        /**
-         * Get a single node level1/level2
-         *
-         * @param level1
-         *          1st level node name
-         * @param level2
-         *          2nd level node name
-         * @throws IOException
-         */
-        LedgerRange getLedgerRangeByLevel(final String level1, final String level2)
-                throws IOException {
-            StringBuilder nodeBuilder = new StringBuilder();
-            nodeBuilder.append(ledgerRootPath).append("/")
-                       .append(level1).append("/").append(level2);
-            String nodePath = nodeBuilder.toString();
-            List<String> ledgerNodes = null;
-            try {
-                ledgerNodes = ZkUtils.getChildrenInSingleNode(zk, nodePath);
-            } catch (InterruptedException e) {
-                throw new IOException("Error when get child nodes from zk", e);
-            }
-            SortedSet<Long> zkActiveLedgers = ledgerListToSet(ledgerNodes, nodePath);
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("All active ledgers from ZK for hash node "
-                          + level1 + "/" + level2 + " : " + zkActiveLedgers);
-            }
-            return new LedgerRange(zkActiveLedgers.subSet(getStartLedgerIdByLevel(level1, level2),
-                                                          getEndLedgerIdByLevel(level1, level2)));
-        }
-    }
 }

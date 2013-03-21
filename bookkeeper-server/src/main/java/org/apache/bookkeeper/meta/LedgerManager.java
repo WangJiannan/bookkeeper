@@ -19,17 +19,13 @@ package org.apache.bookkeeper.meta;
  */
 
 import java.io.Closeable;
-import java.io.IOException;
-import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeSet;
 
-import org.apache.zookeeper.AsyncCallback;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.LedgerMetadata;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.GenericCallback;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.Processor;
 import org.apache.bookkeeper.versioning.Version;
+import org.apache.zookeeper.AsyncCallback;
 
 /**
  * LedgerManager takes responsibility of ledger management in client side.
@@ -117,67 +113,4 @@ public interface LedgerManager extends Closeable {
     public void asyncProcessLedgers(Processor<Long> processor, AsyncCallback.VoidCallback finalCb,
                                     Object context, int successRc, int failureRc);
 
-    /**
-     * Loop to scan a range of metadata from metadata storage
-     *
-     * @return will return a iterator of the Ranges
-     */
-    public LedgerRangeIterator getLedgerRanges();
-
-    /*
-     * Used to represent the Ledgers range returned from the
-     * current scan.
-     */
-    public static class LedgerRange {
-        // returned ledgers
-        private final SortedSet<Long> ledgers;
-
-        public LedgerRange(Set<Long> ledgers) {
-            this.ledgers = new TreeSet<Long>(ledgers);
-        }
-
-        public int size() {
-            return this.ledgers.size();
-        }
-
-        public Long start() {
-            return ledgers.first();
-        }
-
-        public Long end() {
-            return ledgers.last();
-        }
-
-        public Set<Long> getLedgers() {
-            return this.ledgers;
-        }
-    }
-
-    /**
-     * Interface of the ledger meta range iterator from
-     * storage (e.g. in ZooKeeper or other key/value store)
-     */
-    interface LedgerRangeIterator {
-
-        /**
-         * @return true if there are records in the ledger metadata store. false
-         * only when there are indeed no records in ledger metadata store.
-         * @throws IOException thrown when there is any problem accessing the ledger
-         * metadata store. It is critical that it doesn't return false in the case
-         * in the case it fails to access the ledger metadata store. Otherwise it
-         * will end up deleting all ledgers by accident.
-         */
-        public boolean hasNext() throws IOException;
-
-        /**
-         * Get the next element.
-         *
-         * @return the next element.
-         * @throws IOException thrown when there is a problem accessing the ledger
-         * metadata store. It is critical that it doesn't return false in the case
-         * in the case it fails to access the ledger metadata store. Otherwise it
-         * will end up deleting all ledgers by accident.
-         */
-        public LedgerRange next() throws IOException;
-    }
 }

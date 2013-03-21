@@ -27,7 +27,6 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.CountDownLatch;
 
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.LedgerMetadata;
@@ -460,61 +459,6 @@ public class MSLedgerManagerFactory extends LedgerManagerFactory {
             cursor.asyncReadEntries(maxEntriesPerScan, msCallback, null);
         }
 
-        class MSLedgerRangeIterator implements LedgerRangeIterator {
-            final CountDownLatch openCursorLatch = new CountDownLatch(1);
-            MetastoreCursor cursor = null;
-            // last ledger id in previous range
-
-            MSLedgerRangeIterator() {
-                MetastoreCallback<MetastoreCursor> openCursorCb = new MetastoreCallback<MetastoreCursor>() {
-                    @Override
-                    public void complete(int rc, MetastoreCursor newCursor, Object ctx) {
-                        if (MSException.Code.OK.getCode() != rc) {
-                            LOG.error("Error opening cursor for ledger range iterator {}", rc);
-                        } else {
-                            cursor = newCursor;
-                        }
-                        openCursorLatch.countDown();
-                    }
-                };
-                ledgerTable.openCursor(NON_FIELDS, openCursorCb, null);
-            }
-
-            @Override
-            public boolean hasNext() throws IOException {
-                try {
-                    openCursorLatch.await();
-                } catch (InterruptedException ie) {
-                    LOG.error("Interrupted waiting for cursor to open", ie);
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted waiting to read range", ie);
-                }
-                if (cursor == null) {
-                    throw new IOException("Failed to open ledger range cursor, check logs");
-                }
-                return cursor.hasMoreEntries();
-            }
-
-            @Override
-            public LedgerRange next() throws IOException {
-                try {
-                    SortedSet<Long> ledgerIds = new TreeSet<Long>();
-                    Iterator<MetastoreTableItem> iter = cursor.readEntries(maxEntriesPerScan);
-                    while (iter.hasNext()) {
-                        ledgerIds.add(key2LedgerId(iter.next().getKey()));
-                    }
-                    return new LedgerRange(ledgerIds);
-                } catch (MSException mse) {
-                    LOG.error("Exception occurred reading from metastore", mse);
-                    throw new IOException("Couldn't read from metastore", mse);
-                }
-            }
-        }
-
-        @Override
-        public LedgerRangeIterator getLedgerRanges() {
-            return new MSLedgerRangeIterator();
-        }
     }
 
     @Override

@@ -21,30 +21,27 @@
 
 package org.apache.bookkeeper.bookie;
 
-import java.util.Map;
 import java.util.NavigableMap;
-import java.util.Set;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.bookkeeper.meta.LedgerManager;
-import org.apache.bookkeeper.meta.LedgerManager.LedgerRange;
-import org.apache.bookkeeper.meta.LedgerManager.LedgerRangeIterator;
+import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.Processor;
 import org.apache.bookkeeper.util.SnapshotMap;
+import org.apache.zookeeper.AsyncCallback;
+import org.apache.zookeeper.AsyncCallback.VoidCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Garbage collector implementation using scan and compare.
+ * Garbage collector implementation using scan and compare mechanism.
  *
- * <p>
- * Garbage collection is processed as below:
- * <ul>
- * <li> fetch all existing ledgers from zookeeper or metastore according to
- * the LedgerManager, called <b>globalActiveLedgers</b>
- * <li> fetch all active ledgers from bookie server, said <b>bkActiveLedgers</b>
- * <li> loop over <b>bkActiveLedgers</b> to find those ledgers that are not in
- * <b>globalActiveLedgers</b>, do garbage collection on them.
- * </ul>
- * </p>
+ * <p>The idea behind this implementation is:<ul>
+ * <li>Assume the ledger id list in local bookie server is <b>LocalLedgers</b></li>
+ * <li>At the same time, the ledger id list at metadata storage is <b>LiveLedgers</b></li>
+ * <li>Then the ledgers require garbage collection are <b>LocalLedgers - LiveLedgers</b></li>
+ * </ul></p>
  */
 public class ScanAndCompareGarbageCollector implements GarbageCollector{
 
@@ -59,50 +56,51 @@ public class ScanAndCompareGarbageCollector implements GarbageCollector{
 
     @Override
     public void gc(GarbageCleaner garbageCleaner) {
-        // create a snapshot first
-        NavigableMap<Long, Boolean> bkActiveLedgersSnapshot =
-                this.activeLedgers.snapshot();
-        LedgerRangeIterator ledgerRangeIterator = ledgerManager.getLedgerRanges();
+        LOG.info("Start ScanAndCompare garbage collection...");
+
+        // Take a snapshot on current active ledgers to do GC
+        NavigableMap<Long, Boolean> snapshot = activeLedgers.snapshot();
+
+        // Notice that the snapshot is a reference object so we need to make a copy
+        final ConcurrentSkipListSet<Long> removedLedgers = new ConcurrentSkipListSet<Long>(snapshot.keySet());
+
+        final int successRc = 0;
+        final int failureRc = 1;
+        final CountDownLatch countDownLatch = new CountDownLatch(1);
+        final AtomicInteger result = new AtomicInteger();
+
+        ledgerManager.asyncProcessLedgers(new Processor<Long>() {
+            @Override
+            public void process(Long data, VoidCallback cb) {
+                removedLedgers.remove(data);
+                cb.processResult(successRc, null, null);
+            }
+        }, new AsyncCallback.VoidCallback() {
+            @Override
+            public void processResult(int rc, String path, Object ctx) {
+                result.set(rc);
+                countDownLatch.countDown();
+            }
+        }, null, successRc, failureRc);
+
         try {
-            // Empty global active ledgers, need to remove all local active ledgers.
-            if (!ledgerRangeIterator.hasNext()) {
-                for (Long bkLid : bkActiveLedgersSnapshot.keySet()) {
-                    // remove it from current active ledger
-                    bkActiveLedgersSnapshot.remove(bkLid);
-                    garbageCleaner.clean(bkLid);
-                }
-            }
-            long lastEnd = -1;
-
-            while(ledgerRangeIterator.hasNext()) {
-                LedgerRange lRange = ledgerRangeIterator.next();
-                Map<Long, Boolean> subBkActiveLedgers = null;
-
-                Long start = lastEnd + 1;
-                Long end = lRange.end();
-                if (!ledgerRangeIterator.hasNext()) {
-                    end = Long.MAX_VALUE;
-                }
-                subBkActiveLedgers = bkActiveLedgersSnapshot.subMap(
-                        start, true, end, true);
-
-                Set<Long> ledgersInMetadata = lRange.getLedgers();
-                LOG.debug("Active in metadata {}, Active in bookie {}",
-                          ledgersInMetadata, subBkActiveLedgers.keySet());
-                for (Long bkLid : subBkActiveLedgers.keySet()) {
-                    if (!ledgersInMetadata.contains(bkLid)) {
-                        // remove it from current active ledger
-                        subBkActiveLedgers.remove(bkLid);
-                        garbageCleaner.clean(bkLid);
-                    }
-                }
-                lastEnd = end;
-            }
-        } catch (Exception e) {
-            // ignore exception, collecting garbage next time
-            LOG.warn("Exception when iterating over the metadata {}", e);
+            countDownLatch.await();
+        } catch (InterruptedException e) {
+            LOG.error("Get InterruptedException when looping all ledgers in metadata storage");
+            return;
         }
+
+        if (result.get() != successRc) {
+            LOG.error("Failed to loop all ledgers in metadata storage: {}", result.get());
+            return;
+        }
+
+        LOG.debug("Garbage collect on ledgers: {}", removedLedgers);
+        for (Long lid : removedLedgers) {
+            activeLedgers.remove(lid);
+            garbageCleaner.clean(lid);
+        }
+
+        LOG.info("Finish ScanAndCompare garbage collection, remove {} ledgers", removedLedgers.size());
     }
 }
-
-
