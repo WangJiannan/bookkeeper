@@ -77,8 +77,8 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
         } while (ledgerId != 0);
 
         StringBuilder sb = new StringBuilder(ledgerMetaPath);
-        while (n-- > 0) {
-            sb.append(negative ? "/-" : "/").append(w[n]);
+        for (int i = 0; i < n; i++) {
+            sb.append(negative ? "/-" : "/").append(w[i]);
         }
         return sb.toString();
     }
@@ -94,7 +94,7 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
 
         long ledgerId = 0;
         try {
-            for (int i = 0; i < radixParts.length; i++) {
+            for (int i = radixParts.length - 1; i >= 0; i--) {
                 ledgerId = ledgerId * RADIX + Long.parseLong(radixParts[i]);
             }
         } catch (NumberFormatException e) {
@@ -173,6 +173,7 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
                 } else if (rc == KeeperException.Code.OK.intValue()) {
                     bkRc = BKException.Code.OK;
                 } else if (rc == KeeperException.Code.NOTEMPTY.intValue()) {
+                    // TODO: delete these nodes once all its children are removed
                     zk.setData(getLedgerPath(ledgerId), EMPTY_ZNODE_DATA, -1, new StatCallback() {
                         @Override
                         public void processResult(int rc, String path, Object ctx, Stat stat) {
@@ -217,7 +218,9 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
 
         private final int successRc;
         private final int failureRc;
-        private final AtomicInteger result;
+        private int result;
+        private String path = null;
+        private boolean finished = false;
 
         AtomicInteger counter = new AtomicInteger();
         private final ScheduledExecutorService scheduler;
@@ -229,7 +232,7 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
             this.context = context;
             this.successRc = successRc;
             this.failureRc = failureRc;
-            this.result = new AtomicInteger(successRc);
+            this.result = successRc;
             this.scheduler = scheduler;
         }
 
@@ -245,31 +248,44 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
 
         @Override
         public void processResult(int rc, String path, Object ctx) {
-            if (successRc != rc) {
-                result.compareAndSet(successRc, failureRc);
-            }
             int left = counter.decrementAndGet();
-            if (left == 0) {
-                synchronized (counter) {
-                    counter.notify();
-                }
+            if (successRc != rc) {
+                failed(path);
+                return;
             }
-        }
-
-        public void failed() {
-            processResult(failureRc, null, null);
-        }
-
-        public void finish() {
-            synchronized (counter) {
-                while (counter.get() > 0) {
-                    try {
-                        counter.wait();
-                    } catch (InterruptedException e) {
+            if (left == 0) {
+                synchronized (this) {
+                    if (finished) {
+                        notify();
                     }
                 }
             }
-            finalCb.processResult(result.get(), null, context);
+        }
+
+        public synchronized void failed(String path) {
+            // only the first failed will be handled
+            if (result == failureRc) {
+                return;
+            }
+            result = failureRc;
+            this.path = path;
+            finish();
+        }
+
+        public synchronized void finish() {
+            if (finished) {
+                return;
+            }
+            finished = true;
+
+            if (counter.get() > 0) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                }
+            }
+
+            finalCb.processResult(result, path, context);
         }
     }
 
@@ -286,8 +302,9 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
             @Override
             public void operationComplete(int rc, TreeNode node) {
                 if (Code.OK.intValue() != rc) {
-                    pc.failed();
-                    backtrack(path, levelStack, pc);
+                    // terminal immediately
+                    levelStack.clear();
+                    pc.failed(path);
                     return;
                 }
 
@@ -386,7 +403,7 @@ public class ZkRadixTreeLedgerManager extends AbstractZkLedgerManager {
                             return;
                         }
 
-                        cb.operationComplete(rc, new TreeNode(nodes, stat));
+                        cb.operationComplete(Code.OK.intValue(), new TreeNode(nodes, stat));
                     }
                 }, null);
             }

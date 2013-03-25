@@ -73,7 +73,7 @@ public class ZkRadixTreeLedgerManagerFactory extends LedgerManagerFactory {
     @Override
     public LedgerUnderreplicationManager newLedgerUnderreplicationManager() throws KeeperException,
             InterruptedException, CompatibilityException {
-        // TODO check compatibility
+        // just use zk ledger underreplication manager
         return new ZkLedgerUnderreplicationManager(conf, zk);
     }
 
