@@ -119,4 +119,8 @@ public class ZkLedgerIdGenerator implements LedgerIdGenerator {
         return ledgerId;
     }
 
+    @Override
+    public void close() throws IOException {
+    }
+
 }

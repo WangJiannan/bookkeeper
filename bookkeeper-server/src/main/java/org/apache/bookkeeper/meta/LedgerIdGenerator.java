@@ -17,6 +17,7 @@
  */
 package org.apache.bookkeeper.meta;
 
+import java.io.Closeable;
 import java.io.IOException;
 
 import org.apache.bookkeeper.client.BKException;
@@ -27,7 +28,7 @@ import org.apache.zookeeper.ZooKeeper;
 /**
  * The interface for global unique ledger ID generation
  */
-public interface LedgerIdGenerator {
+public interface LedgerIdGenerator extends Closeable {
 
     /**
      * Initialize a ledger ID generator

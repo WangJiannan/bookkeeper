@@ -24,7 +24,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import junit.framework.TestCase;
@@ -34,8 +33,8 @@ import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.GenericCallback;
 import org.apache.bookkeeper.test.ZooKeeperUtil;
 import org.apache.commons.configuration.ConfigurationException;
-import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.KeeperException.Code;
+import org.apache.zookeeper.ZooKeeper;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -84,6 +83,7 @@ public class TestLedgerIdGenerator extends TestCase {
     @After
     public void tearDown() throws Exception {
         LOG.info("Tearing down test");
+        ledgerIdGenerator.close();
         zk.close();
         zkutil.killServer();
 
@@ -99,12 +99,12 @@ public class TestLedgerIdGenerator extends TestCase {
 
     @Test(timeout=60000)
     public void testGenerateLedgerId() throws Exception {
-        // Create *nThread* threads to generate ledger id within *time* ms.
-        // And then check there is no identical ledger id.
-        final int nThread = 4;
-        final long time = 500;
+        // Create *nThread* threads each generate *nLedgers* ledger id,
+        // and then check there is no identical ledger id.
+        final int nThread = 2;
+        final int nLedgers = 2000;
+        final CountDownLatch countDownLatch = new CountDownLatch(nThread*nLedgers);
 
-        final AtomicInteger counter = new AtomicInteger(0);
         final AtomicInteger errCount = new AtomicInteger(0);
         final ConcurrentLinkedQueue<Long> ledgerIds = new ConcurrentLinkedQueue<Long>();
         final GenericCallback<Long> cb = new GenericCallback<Long>() {
@@ -115,46 +115,25 @@ public class TestLedgerIdGenerator extends TestCase {
                 } else {
                     errCount.incrementAndGet();
                 }
-                int left = counter.decrementAndGet();
-                if (left == 0) {
-                    synchronized (counter) {
-                        counter.notify();
-                    }
-                }
+                countDownLatch.countDown();
             }
         };
 
-        final AtomicBoolean stop = new AtomicBoolean(false);
-        final CountDownLatch countDownLatch = new CountDownLatch(nThread);
         long start = System.currentTimeMillis();
 
-        Thread[] threads = new Thread[nThread];
         for (int i = 0; i < nThread; i++) {
-            threads[i] = new Thread() {
+            new Thread() {
                 @Override
                 public void run() {
-                    while (!stop.get()) {
-                        counter.incrementAndGet();
+                    for (int j = 0; j < nLedgers; j++) {
                         ledgerIdGenerator.generateLedgerId(cb);
                     }
-                    countDownLatch.countDown();
                 }
-            };
-            threads[i].start();
+            }.start();
         }
 
-        LOG.info("All threads start to generate ledger id.");
-        Thread.sleep(time);
-        stop.set(true);
         assertTrue("Wait ledger id generation threads to stop timeout : ",
-                countDownLatch.await(5, TimeUnit.SECONDS));
-        LOG.info("All ledger id generation threads stop, wait all ledger id generation callback.");
-        synchronized (counter) {
-            while (counter.get() > 0) {
-                // wait all ledger id generator callback
-                counter.wait();
-            }
-        }
+                countDownLatch.await(30, TimeUnit.SECONDS));
         LOG.info("Number of generated ledger id: {}, time used: {}", ledgerIds.size(),
                 System.currentTimeMillis() - start);
         assertEquals("Error occur during ledger id generation : ", 0, errCount.get());

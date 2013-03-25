@@ -107,7 +107,7 @@ abstract class AbstractZkLedgerManager implements LedgerManager {
                     metadata.setVersion(new ZkVersion(0));
                     ledgerCb.operationComplete(BKException.Code.OK, null);
                 } else if (rc == KeeperException.Code.NODEEXISTS.intValue()) {
-                    LOG.warn("Failed to create ledger {} which is existed, will get new ledger id and retry.", ledgerId);
+                    LOG.warn("Failed to create ledger metadata for {} which already exist", ledgerId);
                     ledgerCb.operationComplete(BKException.Code.LedgerExistException, null);
                 } else {
                     LOG.error("Could not create node for ledger",

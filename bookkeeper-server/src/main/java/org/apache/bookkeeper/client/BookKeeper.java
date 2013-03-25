@@ -581,6 +581,7 @@ public class BookKeeper {
         bookieClient.close();
         try {
             ledgerManager.close();
+            ledgerIdGenerator.close();
             ledgerManagerFactory.uninitialize();
         } catch (IOException ie) {
             LOG.error("Failed to close ledger manager : ", ie);
