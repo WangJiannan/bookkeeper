@@ -18,13 +18,12 @@
 package org.apache.bookkeeper.meta;
 
 import java.util.HashSet;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import junit.framework.TestCase;
 
@@ -79,51 +78,21 @@ public class TestZkBatchLedgerIdGenerator extends TestCase {
     @Override
     @After
     public void tearDown() throws Exception {
+        ledgerIdGenerator.close();
         zk.close();
         zkutil.killServer();
 
         super.tearDown();
     }
 
-    @Test
-    public void testGenerateLedgerId() throws Exception {
-        for (int slot = 0; slot < ZkBatchLedgerIdGenerator.NUM_SLOTS; slot++) {
-            for (int id = 0; id < 10; id++) {
-                countDownFatchBatchID = new CountDownLatch(1);
-                ledgerIdGenerator.fetchLedgerIdBatch(slot);
-                assertTrue("Wait ledger id generator fetch batch ids timeout : ",
-                        countDownFatchBatchID.await(5, TimeUnit.SECONDS));
-
-                final AtomicLong ledgerId = new AtomicLong();
-                final AtomicBoolean error = new AtomicBoolean(true);
-                final CountDownLatch countDownLatch = new CountDownLatch(1);
-                ledgerIdGenerator.generateLedgerId(new GenericCallback<Long>() {
-                    @Override
-                    public void operationComplete(int rc, Long result) {
-                        if (Code.OK.intValue() == rc) {
-                            error.set(false);
-                            ledgerId.set(result);
-                        }
-                        countDownLatch.countDown();
-                    }
-                });
-                assertTrue("Wait ledger id generation callback timeout : ",
-                        countDownLatch.await(5, TimeUnit.SECONDS));
-                assertFalse("Error happen during ledger id generation : ", error.get());
-                assertEquals("Unexpected ledger id generated, slot=" + slot + ", id=" + id + " : ",
-                        ZkBatchLedgerIdGenerator.getLedgerID(slot, id), ledgerId.get());
-            }
-        }
-    }
-
-    @Test
+    @Test(timeout=60000)
     public void testFetchBatchIdsInSameSlot() throws Exception {
         ZkBatchLedgerIdGenerator anotherLedgerIdGenerator = new HackZkBatchLedgerIdGenerator();
         anotherLedgerIdGenerator.initialize(conf, zk);
 
         final ConcurrentLinkedQueue<Long> ledgerIds = new ConcurrentLinkedQueue<Long>();
-        final int slot = 5;
-        for (int id = 0; id < 1000; id++) {
+        final int slot = new Random().nextInt(ZkBatchLedgerIdGenerator.NUM_SLOTS);
+        for (int id = 0; id < 10; id++) {
             // fetch batch id in the same slot
             countDownFatchBatchID = new CountDownLatch(2);
             ledgerIdGenerator.fetchLedgerIdBatch(slot);
@@ -151,6 +120,8 @@ public class TestZkBatchLedgerIdGenerator extends TestCase {
                     countDownLatch.await(5, TimeUnit.SECONDS));
             assertEquals("Error occur during ledger id generation : ", 0, errCount.get());
         }
+
+        anotherLedgerIdGenerator.close();
 
         Set<Long> ledgers = new HashSet<Long>();
         while (!ledgerIds.isEmpty()) {
