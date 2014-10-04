@@ -1,0 +1,113 @@
+#!/bin/sh -e
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+echo Running mvn clean
+mvn clean >/dev/null
+
+# all logs are placed under target folder to avoid rat check failure
+readonly LOG_DIR=target/logs
+mkdir -p $LOG_DIR
+
+function start_section() {
+    echo
+    echo "$@"
+    echo "===================================="
+}
+
+function dump_build_env() {
+    local title="$1"
+    local cmd="$2"
+    echo
+    echo "[$title]"
+    sh -c "$cmd" 2>&1
+}
+
+function set_log_file() {
+    log_file="$1"
+    echo Log File: $log_file
+    rm -f "$log_file"
+}
+
+function cleanup() {
+    echo
+    echo Clean up
+    if [ "$hedwig_proc_id" ]; then
+        kill -9 $hedwig_proc_id || true
+    fi
+    if [ "$bookie_proc_id" ]; then
+        kill -9 $bookie_proc_id || true
+    fi
+    tar czf ${LOG_DIR}.tar.gz $LOG_DIR
+    echo Log Archieve: ${LOG_DIR}.tar.gz
+    echo
+    echo Send ${LOG_DIR}.tar.gz to bookkeeper-user@zookeeper.apache.org in case of failure.
+}
+
+trap "cleanup" EXIT
+
+start_section Collecting Build Environment Info
+set_log_file $LOG_DIR/env.log
+dump_build_env "Operation System" 'uname -a' | tee -a $log_file
+dump_build_env "JDK" 'javac -version; java -version' | tee -a $log_file
+dump_build_env "Maven" 'mvn --version' | tee -a $log_file
+
+start_section Initialization
+# execute 'mvn install' to
+#    1. resolve sub-project dependency
+#    2. build jar to run server later
+set_log_file $LOG_DIR/init.log
+mvn install -DskipTests >$log_file
+
+start_section Checking Code
+set_log_file $LOG_DIR/check_code.log
+mvn compile findbugs:findbugs >>$log_file
+mvn apache-rat:check >>$log_file
+
+start_section Running Unit Test
+# fail to run 'mvn test' on top of code directory,
+# so iterate sub-projects manually.
+for project in bookkeeper-server hedwig-client hedwig-client-jms hedwig-server; do
+    set_log_file $LOG_DIR/${project}-ut.log
+    (cd $project; mvn test &>../$log_file) || exit $?
+done
+
+start_section Start Standalone Bookie Service
+BOOKIE_CMD=bookkeeper-server/bin/bookkeeper
+BOOKIE_LOG_FILE=$LOG_DIR/bookie.log
+NUM_BOOKIE=3
+$BOOKIE_CMD localbookie $NUM_BOOKIE &>$BOOKIE_LOG_FILE &
+bookie_proc_id=$!
+echo "Process ID: $bookie_proc_id"
+echo "Log file: $BOOKIE_LOG_FILE"
+
+start_section Start Standalone Hedwig Service
+HEDWIG_CMD=hedwig-server/bin/hedwig
+HEDWIG_LOG_FILE=$LOG_DIR/hedwig.log
+$HEDWIG_CMD server &>$HEDWIG_LOG_FILE &
+hedwig_proc_id=$!
+echo "Process ID: $hedwig_proc_id"
+echo "Log file: $HEDWIG_LOG_FILE"
+
+start_section Running Simple Bookie Test
+set_log_file $LOG_DIR/test_bookie.log
+$BOOKIE_CMD shell simpletest -ensemble $NUM_BOOKIE -writeQuorum $NUM_BOOKIE &>$log_file
+
+start_section Running Simple Hedwig Test
+set_log_file $LOG_DIR/test_hedwig.log
+expect -c '
+    spawn hedwig-server/bin/hedwig console
+    send "pubsub topic subscriber 10 message\r"
+    send "quit\r"
+    expect eof
+' &>$log_file
